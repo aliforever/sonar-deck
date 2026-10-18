@@ -1,0 +1,918 @@
+import { ComboBox, ScrollView, LineEdit, ListView } from "std-widgets.slint";
+import { Theme, Icons } from "theme.slint";
+import { Icon, Card, Label, Pill, RoundButton, NavItem, Fader, HSlider, Badge, ToggleSwitch, LevelBar, Avatar, Segmented, StepSlider } from "widgets.slint";
+
+// A mixer strip: the default output device or one app.
+export struct Strip {
+    key: string,
+    name: string,
+    initial: string,
+    accent: color,
+    volume: float,
+    muted: bool,
+    level: float,
+    is-device: bool,
+    active: bool,
+    detail: string,
+}
+
+// One app on the Apps page.
+export struct AppItem {
+    key: string,
+    name: string,
+    initial: string,
+    accent: color,
+    group: int,
+    volume: float,
+    muted: bool,
+    level: float,
+    active: bool,
+}
+
+export struct EqItem {
+    name: string,
+    active: bool,
+}
+
+// Headset settings as shown in the UI (see headset::Settings).
+export struct Hs {
+    anc-mode: int,
+    anc-level: int,
+    transparency: int,
+    mic-volume: int,
+    boom-sidetone: bool,
+    boom-sidetone-level: int,
+    ear-sidetone: bool,
+    ear-sidetone-level: int,
+    volume-limiter: bool,
+    nr-boom: int,
+    nr-ear: int,
+    mic-led: int,
+    inactivity: int,
+    bt-power: bool,
+    bt-call: int,
+    oled-brightness: int,
+    oled-saver-timer: int,
+    oled-saver-mode: int,
+    home-view: int,
+    home-option: int,
+}
+
+export struct Dev {
+    id: string,
+    name: string,
+    is-default: bool,
+    volume: float,
+    muted: bool,
+    level: float,
+}
+
+component MixStrip inherits Card {
+    in property <Strip> s;
+    in property <bool> software-volume;
+    in property <string> base-knob;
+    callback volume(float);
+    callback mute();
+    min-width: 128px;
+    max-width: 4000px;
+    preferred-width: 150px;
+    horizontal-stretch: 1;
+    opacity: s.active || s.is-device ? 1 : 0.7;
+    background: @linear-gradient(180deg, s.accent.with-alpha(0.10) 0%, Theme.card 38%);
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    commands: root.s.is-device ? Icons.speaker : root.s.key == "game" ? Icons.game : root.s.key == "chat" ? Icons.chat : root.s.key == "media" ? Icons.media : Icons.aux;
+                    size: 18px;
+                    tint: root.s.accent;
+                }
+            }
+            Text {
+                text: root.s.name;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 800;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: root.s.is-device ? (root.base-knob != "" ? root.base-knob : (root.software-volume ? "Software volume" : "Output device")) : root.s.detail;
+            color: root.s.active && !root.s.is-device ? Theme.good : Theme.dim;
+            font-size: 11px;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            Rectangle { horizontal-stretch: 1; }
+            Fader {
+                value: root.s.volume;
+                level: root.s.muted ? 0 : root.s.level;
+                accent: root.s.accent;
+                muted: root.s.muted;
+                moved(v) => { root.volume(v); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Text {
+            text: round(root.s.volume * 100) + "%";
+            horizontal-alignment: center;
+            color: root.s.muted ? Theme.faint : Theme.text;
+            font-size: 22px;
+            font-weight: 800;
+        }
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            RoundButton {
+                icon: root.s.muted ? Icons.muted : Icons.speaker;
+                active: root.s.muted;
+                clicked => { root.mute(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+}
+
+component DeviceRow inherits Rectangle {
+    in property <Dev> d;
+    in property <color> accent;
+    in property <string> glyph;
+    callback make-default();
+    callback volume(float);
+    callback mute();
+    height: 64px;
+    border-radius: 14px;
+    background: d.is-default ? accent.with-alpha(0.12) : (ta.has-hover ? #ffffff08 : transparent);
+    border-width: 1px;
+    border-color: d.is-default ? accent.with-alpha(0.45) : transparent;
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.make-default(); } }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                border-width: 2px;
+                border-color: root.d.is-default ? root.accent : Theme.faint;
+                Rectangle {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: root.accent;
+                    opacity: root.d.is-default ? 1 : 0;
+                    animate opacity { duration: 150ms; }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            horizontal-stretch: 1;
+            Text { text: root.d.name; color: Theme.text; font-weight: root.d.is-default ? 700 : 500; overflow: elide; }
+            LevelBar { level: root.d.muted ? 0 : root.d.level; }
+        }
+        VerticalLayout {
+            alignment: center;
+            HSlider {
+                width: 180px;
+                value: root.d.volume;
+                accent: root.accent;
+                moved(v) => { root.volume(v); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text { text: round(root.d.volume * 100) + "%"; color: Theme.dim; width: 40px; horizontal-alignment: right; }
+        }
+        VerticalLayout {
+            alignment: center;
+            RoundButton { icon: root.d.muted ? Icons.muted : root.glyph; active: root.d.muted; clicked => { root.mute(); } }
+        }
+    }
+}
+
+component AppRow inherits Rectangle {
+    in property <AppItem> a;
+    callback volume(float);
+    callback mute();
+    callback group(int);
+    height: 62px;
+    border-radius: 14px;
+    background: ta.has-hover ? #ffffff08 : transparent;
+    ta := TouchArea { }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Avatar { text: root.a.initial; tone: root.a.accent; }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            horizontal-stretch: 1;
+            min-width: 140px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: root.a.name; color: Theme.text; font-weight: 700; overflow: elide; }
+                Text { text: root.a.active ? "playing" : ""; color: Theme.good; font-size: 11px; vertical-alignment: center; }
+            }
+            LevelBar { level: root.a.muted ? 0 : root.a.level; }
+        }
+        VerticalLayout {
+            alignment: center;
+            Segmented {
+                width: 300px;
+                options: ["Game", "Chat", "Media", "Aux"];
+                index: root.a.group;
+                changed(i) => { root.group(i); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HSlider { width: 150px; value: root.a.volume; accent: root.a.accent; moved(v) => { root.volume(v); } }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text { text: round(root.a.volume * 100) + "%"; color: Theme.dim; width: 38px; horizontal-alignment: right; }
+        }
+        VerticalLayout {
+            alignment: center;
+            RoundButton { icon: root.a.muted ? Icons.muted : Icons.speaker; active: root.a.muted; clicked => { root.mute(); } }
+        }
+    }
+}
+
+component ToggleRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    callback toggled(bool);
+    height: 40px;
+    HorizontalLayout {
+        spacing: 12px;
+        Text { text: root.text; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        VerticalLayout {
+            alignment: center;
+            ToggleSwitch { checked: root.on; toggled(v) => { root.toggled(v); } }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Sonar Deck";
+    icon: @image-url("../assets/icon.png");
+    preferred-width: 1240px;
+    preferred-height: 800px;
+    min-width: 1000px;
+    min-height: 640px;
+    background: Theme.bg;
+    default-font-size: 13px;
+
+    in property <string> error-text;
+
+    // Mixer
+    in property <[Strip]> strips;
+    in property <string> output-name;
+    in property <string> mic-name;
+    in property <float> mic-volume;
+    in property <bool> mic-muted;
+    in property <float> mic-level;
+
+    // Quick switch
+    in property <string> quick-target;
+    in property <string> headset-name: "Headset";
+    in property <string> speaker-name: "Speakers";
+    in property <bool> headset-present;
+    in property <string> headset-state;
+    in property <bool> headset-on;
+    in property <bool> auto-switch;
+    in property <bool> auto-available;
+
+    // Devices
+    in property <[Dev]> outputs;
+    in property <[Dev]> inputs;
+
+    // Settings
+    in property <[string]> output-names;
+    in property <[string]> input-names;
+    in property <[string]> mic-choices;
+    in property <int> headset-out-index: -1;
+    in property <int> speaker-out-index: -1;
+    in property <int> headset-mic-index: -1;
+    in property <int> speaker-mic-index: 0;
+    in property <bool> launch-at-login;
+    in property <string> headset-raw;
+    in property <bool> hs-available;
+    in property <Hs> hs;
+    in property <string> hs-battery;
+    in property <bool> use-device-volume;
+    in property <bool> use-base-knob: true;
+    in property <bool> update-check: true;
+    in property <string> update-version;
+    in property <string> update-url;
+    in property <bool> software-volume;
+    in property <string> base-knob;
+
+    // Apps and EQ
+    in property <[AppItem]> apps;
+    in property <string> eq-current;
+    in property <[EqItem]> eq-items;
+    in property <string> eq-count;
+
+    in-out property <int> page: 0;
+
+    callback strip-volume(string, float);
+    callback strip-mute(string);
+    callback quick-switch(string);
+    callback auto-switch-toggled(bool);
+    callback make-default(string, bool);
+    callback device-volume(string, bool, float);
+    callback device-mute(string, bool);
+    callback mic-volume-moved(float);
+    callback mic-mute-toggled();
+    callback role-chosen(string, int);
+    callback launch-at-login-toggled(bool);
+    callback hs-set(string, int);
+    callback device-volume-mode-toggled(bool);
+    callback base-knob-toggled(bool);
+    callback update-check-toggled(bool);
+    callback open-url(string);
+    callback app-volume(string, float);
+    callback app-mute(string);
+    callback app-group(string, int);
+    callback eq-filter(string);
+    callback eq-apply(string);
+
+    property <[string]> page-titles: ["Mixer", "Apps", "Headset", "Devices", "Settings"];
+    property <[string]> timer-options: ["Never", "1 min", "5 min", "10 min", "15 min", "30 min", "60 min"];
+
+    // Backdrop
+    Rectangle { background: @linear-gradient(135deg, #0a0c11 0%, #10141d 55%, #160e16 100%); }
+    Rectangle {
+        x: parent.width - 560px;
+        y: -260px;
+        width: 820px;
+        height: 680px;
+        background: @radial-gradient(circle, #ff5a1f30 0%, #ff5a1f00 62%);
+    }
+    Rectangle {
+        x: 120px;
+        y: parent.height - 380px;
+        width: 700px;
+        height: 600px;
+        background: @radial-gradient(circle, #4da3ff1c 0%, #4da3ff00 62%);
+    }
+
+    HorizontalLayout {
+        // Sidebar
+        Rectangle {
+            width: 216px;
+            background: Theme.panel;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.line; }
+            VerticalLayout {
+                padding: 18px;
+                padding-top: 26px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    padding-bottom: 22px;
+                    Image { source: @image-url("../assets/icon.png"); width: 40px; height: 40px; }
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: "SONAR"; color: Theme.text; font-size: 17px; font-weight: 900; letter-spacing: 3px; }
+                        Text { text: "DECK"; color: Theme.accent; font-size: 11px; font-weight: 800; letter-spacing: 5px; }
+                    }
+                }
+                NavItem { text: "Mixer"; icon: Icons.mixer; active: root.page == 0; clicked => { root.page = 0; } }
+                NavItem { text: "Apps"; icon: Icons.aux; active: root.page == 1; clicked => { root.page = 1; } }
+                NavItem { text: "Headset"; icon: Icons.headset; active: root.page == 2; clicked => { root.page = 2; } }
+                NavItem { text: "Devices"; icon: Icons.speaker; active: root.page == 3; clicked => { root.page = 3; } }
+                NavItem { text: "Settings"; icon: Icons.settings; active: root.page == 4; clicked => { root.page = 4; } }
+                Rectangle { vertical-stretch: 1; }
+                if root.update-version != "": Pill {
+                    text: "Update " + root.update-version + " available";
+                    pad: 12px;
+                    height: 34px;
+                    active: true;
+                    accent: Theme.good.darker(0.25);
+                    clicked => { root.open-url(root.update-url); }
+                }
+                Card {
+                    height: 74px;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 6px;
+                        Badge {
+                            text: root.headset-present ? root.headset-state : "NO HEADSET";
+                            tone: root.headset-on ? Theme.good : Theme.faint;
+                        }
+                        Text { text: "Playing on " + root.output-name; color: Theme.dim; font-size: 11px; overflow: elide; }
+                    }
+                }
+            }
+        }
+
+        // Content
+        VerticalLayout {
+            padding: 26px;
+            padding-top: 22px;
+            spacing: 18px;
+            HorizontalLayout {
+                height: 48px;
+                VerticalLayout {
+                    alignment: center;
+                    Text { text: root.page-titles[root.page]; color: Theme.text; font-size: 28px; font-weight: 900; }
+                }
+            }
+
+            if root.error-text != "": Rectangle {
+                height: 36px;
+                border-radius: 10px;
+                background: Theme.bad.with-alpha(0.12);
+                border-width: 1px;
+                border-color: Theme.bad.with-alpha(0.35);
+                Text { text: root.error-text; color: Theme.bad.brighter(0.3); overflow: elide; x: 14px; width: parent.width - 28px; }
+            }
+
+            // ---------------- Mixer ----------------
+            if root.page == 0: VerticalLayout {
+                vertical-stretch: 1;
+                max-width: 8000px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    height: 128px;
+                    max-width: 8000px;
+                    Card {
+                        horizontal-stretch: 3;
+                        max-width: 8000px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Label { text: "OUTPUT"; vertical-alignment: center; }
+                                if root.headset-present: Badge {
+                                    text: root.headset-state;
+                                    tone: root.headset-on ? Theme.good : Theme.faint;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                if root.auto-available: Pill {
+                                    text: "Auto";
+                                    icon: Icons.auto;
+                                    pad: 12px;
+                                    height: 30px;
+                                    active: root.auto-switch;
+                                    accent: Theme.good.darker(0.25);
+                                    clicked => { root.auto-switch-toggled(!root.auto-switch); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Pill {
+                                    horizontal-stretch: 1;
+                                    height: 46px;
+                                    text: root.headset-name;
+                                    icon: Icons.headset;
+                                    active: root.quick-target == "headset";
+                                    clicked => { root.quick-switch("headset"); }
+                                }
+                                Pill {
+                                    horizontal-stretch: 1;
+                                    height: 46px;
+                                    text: root.speaker-name;
+                                    icon: Icons.speaker;
+                                    active: root.quick-target == "speakers";
+                                    clicked => { root.quick-switch("speakers"); }
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        horizontal-stretch: 2;
+                        max-width: 8000px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Label { text: "MICROPHONE"; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: round(root.mic-volume * 100) + "%"; color: Theme.text; font-weight: 700; vertical-alignment: center; }
+                                RoundButton {
+                                    width: 30px;
+                                    height: 30px;
+                                    icon: root.mic-muted ? Icons.muted : Icons.mic;
+                                    active: root.mic-muted;
+                                    clicked => { root.mic-mute-toggled(); }
+                                }
+                            }
+                            HSlider {
+                                value: root.mic-volume;
+                                accent: #ff4d6d;
+                                moved(v) => { root.mic-volume-moved(v); }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: root.mic-name; color: Theme.dim; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
+                                VerticalLayout {
+                                    alignment: center;
+                                    LevelBar { width: 90px; level: root.mic-muted ? 0 : root.mic-level; }
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    vertical-stretch: 1;
+                    max-width: 8000px;
+                    for s in root.strips: MixStrip {
+                        s: s;
+                        software-volume: root.software-volume;
+                        base-knob: root.base-knob;
+                        volume(v) => { root.strip-volume(s.key, v); }
+                        mute => { root.strip-mute(s.key); }
+                    }
+                }
+            }
+
+            // ---------------- Apps ----------------
+            if root.page == 1: Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-bottom: 6px;
+                        Text { text: "Pick a group for each app; the Mixer's group faders control them together."; color: Theme.dim; }
+                    }
+                    if root.apps.length == 0: Text { text: "No apps are playing sound right now."; color: Theme.faint; horizontal-alignment: center; }
+                    ListView {
+                        vertical-stretch: 1;
+                        for a in root.apps: AppRow {
+                            a: a;
+                            volume(v) => { root.app-volume(a.key, v); }
+                            mute => { root.app-mute(a.key); }
+                            group(i) => { root.app-group(a.key, i); }
+                        }
+                    }
+                }
+            }
+
+            // ---------------- Headset ----------------
+            if root.page == 2 && !root.hs-available: Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Text { text: root.headset-present ? "Turn the headset on to change its settings" : "No supported SteelSeries headset found"; color: Theme.text; font-size: 17px; font-weight: 700; horizontal-alignment: center; }
+                    Text { text: "Settings are read from and saved to the headset itself."; color: Theme.dim; horizontal-alignment: center; }
+                }
+            }
+            if root.page == 2 && root.hs-available: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 16px;
+                    padding-right: 12px;
+                    alignment: start;
+                    // Onboard EQ presets
+                    Card {
+                        height: 360px;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Icon { commands: Icons.game; tint: Theme.accent; }
+                                Text { text: "Game EQ"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: "On the headset: " + root.eq-current; color: Theme.good; font-weight: 700; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                LineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "Search 383 game, music and movie presets…";
+                                    edited(t) => { root.eq-filter(t); }
+                                }
+                                Pill { text: "Flat"; pad: 14px; width: 110px; active: root.eq-current == "Flat"; clicked => { root.eq-apply("Flat"); } }
+                            }
+                            ListView {
+                                vertical-stretch: 1;
+                                for e in root.eq-items: Rectangle {
+                                    height: 38px;
+                                    border-radius: 10px;
+                                    background: e.active ? Theme.accent.with-alpha(0.18) : (eta.has-hover ? #ffffff0b : transparent);
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        Text { text: e.name; color: Theme.text; font-weight: e.active ? 700 : 400; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                        if e.active: VerticalLayout { alignment: center; Badge { text: "ON HEADSET"; tone: Theme.accent; } }
+                                    }
+                                    eta := TouchArea { mouse-cursor: pointer; clicked => { root.eq-apply(e.name); } }
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        // Noise control
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Icon { commands: Icons.headset; tint: Theme.accent; }
+                                    Text { text: "Noise control"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: root.hs-battery; color: Theme.good; font-weight: 700; vertical-alignment: center; }
+                                }
+                                Segmented {
+                                    options: ["Off", "Transparency", "Noise cancelling"];
+                                    index: root.hs.anc-mode;
+                                    changed(i) => { root.hs-set("anc-mode", i); }
+                                }
+                                if root.hs.anc-mode == 2: Label { text: "NOISE CANCELLING STRENGTH"; }
+                                if root.hs.anc-mode == 2: Segmented {
+                                    options: ["Low", "Medium", "High"];
+                                    index: root.hs.anc-level - 1;
+                                    changed(i) => { root.hs-set("anc-level", i + 1); }
+                                }
+                                if root.hs.anc-mode == 1: Label { text: "TRANSPARENCY LEVEL"; }
+                                if root.hs.anc-mode == 1: StepSlider {
+                                    value: root.hs.transparency;
+                                    changed(v) => { root.hs-set("transparency", v); }
+                                }
+                                ToggleRow {
+                                    text: "Volume limiter (hearing protection)";
+                                    on: root.hs.volume-limiter;
+                                    toggled(v) => { root.hs-set("volume-limiter", v ? 1 : 0); }
+                                }
+                            }
+                        }
+                        // Microphone
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Icon { commands: Icons.mic; tint: #ff4d6d; }
+                                    Text { text: "Microphone"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                }
+                                Label { text: "MIC VOLUME"; }
+                                StepSlider { value: root.hs.mic-volume; accent: #ff4d6d; changed(v) => { root.hs-set("mic-volume", v); } }
+                                Label { text: "NOISE REDUCTION · BOOM MIC"; }
+                                Segmented { options: ["Off", "Low", "Medium", "High"]; index: root.hs.nr-boom; accent: #ff4d6d; changed(i) => { root.hs-set("nr-boom", i); } }
+                                Label { text: "NOISE REDUCTION · BUILT-IN MICS"; }
+                                Segmented { options: ["Off", "Low", "Medium", "High"]; index: root.hs.nr-ear; accent: #ff4d6d; changed(i) => { root.hs-set("nr-ear", i); } }
+                                Label { text: "MUTED MIC LIGHT"; }
+                                StepSlider { value: root.hs.mic-led; minimum: 0; accent: #ff4d6d; changed(v) => { root.hs-set("mic-led", v); } }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        // Sidetone
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                alignment: start;
+                                Text { text: "Sidetone"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                Text { text: "Hear your own voice while you talk."; color: Theme.dim; }
+                                ToggleRow { text: "Boom mic"; on: root.hs.boom-sidetone; toggled(v) => { root.hs-set("boom-sidetone", v ? 1 : 0); } }
+                                if root.hs.boom-sidetone: StepSlider { value: root.hs.boom-sidetone-level; changed(v) => { root.hs-set("boom-sidetone-level", v); } }
+                                ToggleRow { text: "Built-in mics"; on: root.hs.ear-sidetone; toggled(v) => { root.hs-set("ear-sidetone", v ? 1 : 0); } }
+                                if root.hs.ear-sidetone: StepSlider { value: root.hs.ear-sidetone-level; changed(v) => { root.hs-set("ear-sidetone-level", v); } }
+                            }
+                        }
+                        // Power & Bluetooth
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                alignment: start;
+                                Text { text: "Power & Bluetooth"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                Label { text: "TURN OFF WHEN IDLE"; }
+                                Segmented { options: root.timer-options; index: root.hs.inactivity; changed(i) => { root.hs-set("inactivity", i); } }
+                                ToggleRow { text: "Bluetooth on at power-up"; on: root.hs.bt-power; toggled(v) => { root.hs-set("bt-power", v ? 1 : 0); } }
+                                Label { text: "DURING BLUETOOTH CALLS"; }
+                                Segmented { options: ["Do nothing", "Lower other audio", "Mute other audio"]; index: root.hs.bt-call; changed(i) => { root.hs-set("bt-call", i); } }
+                            }
+                        }
+                    }
+                    // Base station display
+                    Card {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            alignment: start;
+                            Text { text: "Base station display"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                            HorizontalLayout {
+                                spacing: 24px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 10px;
+                                    Label { text: "BRIGHTNESS"; }
+                                    StepSlider { value: root.hs.oled-brightness; accent: Theme.accent-2; changed(v) => { root.hs-set("oled-brightness", v); } }
+                                    Label { text: "HOME SCREEN"; }
+                                    Segmented { options: ["Detailed", "Simple"]; index: root.hs.home-view; accent: Theme.accent-2; changed(i) => { root.hs-set("home-view", i); } }
+                                    Label { text: "SHOW"; }
+                                    Segmented { options: ["Stereo", "EQ preset", "Meters"]; index: root.hs.home-option; accent: Theme.accent-2; changed(i) => { root.hs-set("home-option", i); } }
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 10px;
+                                    Label { text: "SCREEN SAVER AFTER"; }
+                                    Segmented { options: root.timer-options; index: root.hs.oled-saver-timer; accent: Theme.accent-2; changed(i) => { root.hs-set("oled-saver-timer", i); } }
+                                    Label { text: "SCREEN SAVER"; }
+                                    Segmented { options: ["Turn off", "Dim"]; index: root.hs.oled-saver-mode; accent: Theme.accent-2; changed(i) => { root.hs-set("oled-saver-mode", i); } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------------- Devices ----------------
+            if root.page == 3: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 16px;
+                    padding-right: 12px;
+                    alignment: start;
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                padding-bottom: 6px;
+                                Icon { commands: Icons.speaker; tint: Theme.accent; }
+                                Text { text: "Outputs"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: "Click a device to make it the default"; color: Theme.faint; font-size: 11px; vertical-alignment: center; }
+                            }
+                            for d in root.outputs: DeviceRow {
+                                d: d;
+                                accent: Theme.accent;
+                                glyph: Icons.speaker;
+                                make-default => { root.make-default(d.id, false); }
+                                volume(v) => { root.device-volume(d.id, false, v); }
+                                mute => { root.device-mute(d.id, false); }
+                            }
+                        }
+                    }
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                padding-bottom: 6px;
+                                Icon { commands: Icons.mic; tint: #ff4d6d; }
+                                Text { text: "Inputs"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                            }
+                            for d in root.inputs: DeviceRow {
+                                d: d;
+                                accent: #ff4d6d;
+                                glyph: Icons.mic;
+                                make-default => { root.make-default(d.id, true); }
+                                volume(v) => { root.device-volume(d.id, true, v); }
+                                mute => { root.device-mute(d.id, true); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------------- Settings ----------------
+            if root.page == 4: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 16px;
+                    padding-right: 12px;
+                    alignment: start;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 8px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Icon { commands: Icons.headset; tint: Theme.accent; }
+                                    Text { text: "Headset"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                }
+                                Label { text: "OUTPUT"; }
+                                ComboBox {
+                                    model: root.output-names;
+                                    current-index: root.headset-out-index;
+                                    selected => { root.role-chosen("headset-out", self.current-index); }
+                                }
+                                Label { text: "MICROPHONE"; }
+                                ComboBox {
+                                    model: root.input-names;
+                                    current-index: root.headset-mic-index;
+                                    selected => { root.role-chosen("headset-mic", self.current-index); }
+                                }
+                            }
+                        }
+                        Card {
+                            horizontal-stretch: 1;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 8px;
+                                alignment: start;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Icon { commands: Icons.speaker; tint: Theme.accent-2; }
+                                    Text { text: "Speakers"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                                }
+                                Label { text: "OUTPUT"; }
+                                ComboBox {
+                                    model: root.output-names;
+                                    current-index: root.speaker-out-index;
+                                    selected => { root.role-chosen("speaker-out", self.current-index); }
+                                }
+                                Label { text: "MICROPHONE"; }
+                                ComboBox {
+                                    model: root.mic-choices;
+                                    current-index: root.speaker-mic-index;
+                                    selected => { root.role-chosen("speaker-mic", self.current-index); }
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 4px;
+                            alignment: start;
+                            Text { text: "App"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                            ToggleRow {
+                                text: root.auto-available ? "Auto switch when the headset turns on or off" : "Auto switch (needs headset power detection, not available yet)";
+                                on: root.auto-switch;
+                                toggled(v) => { root.auto-switch-toggled(v); }
+                            }
+                            ToggleRow {
+                                text: "Base station knob is the master volume (all outputs, like Sonar)";
+                                on: root.use-base-knob;
+                                toggled(v) => { root.base-knob-toggled(v); }
+                            }
+                            ToggleRow {
+                                text: "Let the headset handle volume (off: Sonar Deck applies the volume to every app)";
+                                on: root.use-device-volume;
+                                toggled(v) => { root.device-volume-mode-toggled(v); }
+                            }
+                            ToggleRow {
+                                text: "Check GitHub for new versions once a day";
+                                on: root.update-check;
+                                toggled(v) => { root.update-check-toggled(v); }
+                            }
+                            ToggleRow {
+                                text: "Launch at login (starts in the tray)";
+                                on: root.launch-at-login;
+                                toggled(v) => { root.launch-at-login-toggled(v); }
+                            }
+                            Text {
+                                text: "Ctrl+Alt+F12 toggles headset / speakers from anywhere. Closing this window keeps Sonar Deck in the tray. No SteelSeries software is needed.";
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+                            if root.headset-raw != "": Text {
+                                text: root.headset-raw;
+                                color: Theme.faint;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

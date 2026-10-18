@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check tag matches Cargo.toml
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match Cargo.toml version $version" }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - run: cargo test --release
+      - run: cargo build --release
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item target/release/sonar-deck.exe, LICENSE, README.md stage/
+          Compress-Archive -Path stage/* -DestinationPath "dist/sonar-deck-$env:VERSION-windows-x64.zip"
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" "/DSourceExe=..\target\release\sonar-deck.exe" installer\sonar-deck.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Scoop and winget manifests, checksums
+        shell: pwsh
+        run: |
+          $v = $env:VERSION
+          $repo = "https://github.com/${{ github.repository }}"
+          $zip = "sonar-deck-$v-windows-x64.zip"
+          $setup = "SonarDeck-Setup-$v.exe"
+          $zipHash = (Get-FileHash "dist/$zip" -Algorithm SHA256).Hash.ToLower()
+          $setupHash = (Get-FileHash "dist/$setup" -Algorithm SHA256).Hash
+
+          $scoop = [ordered]@{
+            version = $v
+            description = "Native Windows audio control deck: output switching, app mixer and SteelSeries headset control"
+            homepage = $repo
+            license = "MIT"
+            architecture = @{ "64bit" = @{ url = "$repo/releases/download/v$v/$zip"; hash = $zipHash } }
+            bin = "sonar-deck.exe"
+            shortcuts = @(, @("sonar-deck.exe", "Sonar Deck"))
+            checkver = "github"
+            autoupdate = @{ architecture = @{ "64bit" = @{ url = "$repo/releases/download/v`$version/sonar-deck-`$version-windows-x64.zip" } } }
+          }
+          $scoop | ConvertTo-Json -Depth 6 | Out-File -Encoding utf8NoBOM dist/sonar-deck.json
+
+          $w = "winget"
+          New-Item -ItemType Directory -Force $w | Out-Null
+          $id = "aliforever.SonarDeck"
+          @"
+          PackageIdentifier: $id
+          PackageVersion: $v
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          "@ | Out-File -Encoding utf8NoBOM "$w/$id.yaml"
+          @"
+          PackageIdentifier: $id
+          PackageVersion: $v
+          InstallerType: inno
+          Scope: user
+          Installers:
+            - Architecture: x64
+              InstallerUrl: $repo/releases/download/v$v/$setup
+              InstallerSha256: $setupHash
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          "@ | Out-File -Encoding utf8NoBOM "$w/$id.installer.yaml"
+          @"
+          PackageIdentifier: $id
+          PackageVersion: $v
+          PackageLocale: en-US
+          Publisher: aliforever
+          PublisherUrl: https://github.com/aliforever
+          PackageName: Sonar Deck
+          PackageUrl: $repo
+          License: MIT
+          LicenseUrl: $repo/blob/main/LICENSE
+          ShortDescription: Native Windows audio control deck with headset/speaker switching, an app mixer and SteelSeries Arctis Nova Elite control.
+          Tags: [audio, mixer, steelseries, headset, windows]
+          ManifestType: defaultLocale
+          ManifestVersion: 1.6.0
+          "@ | Out-File -Encoding utf8NoBOM "$w/$id.locale.en-US.yaml"
+          Compress-Archive -Path "$w/*" -DestinationPath "dist/winget-manifests-$v.zip"
+
+          Get-ChildItem dist -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Out-File -Encoding utf8NoBOM dist/SHA256SUMS.txt
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).`n`nInstall with the setup exe, the portable zip, or Scoop:`n``scoop install https://github.com/${{ github.repository }}/releases/latest/download/sonar-deck.json``"
+          gh release create "${{ github.ref_name }}" (Get-ChildItem dist -File).FullName --title "Sonar Deck $env:VERSION" --notes $notes

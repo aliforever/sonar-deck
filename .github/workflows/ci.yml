@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - run: cargo test --release
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonar-deck
+          path: target/release/sonar-deck.exe
