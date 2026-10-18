@@ -101,7 +101,8 @@ jobs:
           "@ | Out-File -Encoding utf8NoBOM "$w/$id.locale.en-US.yaml"
           Compress-Archive -Path "$w/*" -DestinationPath "dist/winget-manifests-$v.zip"
 
-          Get-ChildItem dist -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Out-File -Encoding utf8NoBOM dist/SHA256SUMS.txt
+          $sums = Get-ChildItem dist -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          $sums | Out-File -Encoding utf8NoBOM dist/SHA256SUMS.txt
 
       - name: Publish release
         shell: pwsh
