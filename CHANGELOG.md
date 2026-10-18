@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- The exe no longer needs the Visual C++ Redistributable (the C runtime is linked statically).
+- The installer writes the launch-at-login entry itself instead of running the app, so silent installs
+  (winget) can't stall.
+
 ## 0.1.0
 
 First public release.

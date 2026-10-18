@@ -47,8 +47,12 @@ Name: "{group}\Sonar Deck"; Filename: "{app}\sonar-deck.exe"
 Name: "{group}\Sonar Toggle"; Filename: "{app}\sonar-deck.exe"; Parameters: "toggle"; HotKey: ctrl+alt+f12; Comment: "Toggle Sonar Deck output: headset / speakers"
 Name: "{autodesktop}\Sonar Deck"; Filename: "{app}\sonar-deck.exe"; Tasks: desktopicon
 
+[Registry]
+; Written here rather than by running the app, so a silent install never starts sonar-deck.exe.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Sonar Deck"; ValueData: """{app}\sonar-deck.exe"" --tray"; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: binary; ValueName: "Sonar Deck"; ValueData: "02 00 00 00 00 00 00 00 00 00 00 00"; Flags: uninsdeletevalue; Tasks: autostart
+
 [Run]
-Filename: "{app}\sonar-deck.exe"; Parameters: "login on"; Flags: runhidden; Tasks: autostart
 Filename: "{app}\sonar-deck.exe"; Description: "Launch Sonar Deck"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

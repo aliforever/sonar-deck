@@ -1,6 +1,6 @@
 [package]
 name = "sonar-deck"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Native Windows audio control deck: output switching, app mixer and SteelSeries headset control without SteelSeries GG"
 license = "MIT"
