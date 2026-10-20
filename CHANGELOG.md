@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Removed the headset mic-mute flag from `status`: the Nova Elite doesn't report its mute button over USB.
+- `sonar-deck hidwatch [seconds]` prints the headset's raw HID traffic, for finding out what a button does.
+
 ## 0.1.2
 
 - **Virtual microphone** (Mic page): mixes your mic with desktop audio and a voice changer into VB-CABLE, so
@@ -10,7 +15,7 @@
   the optional low-latency model).
 - **Listen mode**: hear the final mic live, or record 5 s and play it back; Bypass for A/B comparisons.
 - Command line: `sonar-deck default <device>` sets the Windows default device; `sonar-deck micfx in.wav
-  out.wav` runs the mic processing over a recording; `status` shows when the headset mic is muted.
+  out.wav` runs the mic processing over a recording.
 - Prefers the stereo "CABLE Input" over VB-CABLE's 16-channel variant.
 
 ## 0.1.1

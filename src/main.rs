@@ -1082,6 +1082,57 @@ fn cli(command: &str, arg: Option<&str>) -> i32 {
             }
         };
     }
+    if command == "hidwatch" {
+        // sonar-deck hidwatch [seconds]: print the headset's raw status bytes whenever they change, and any
+        // unsolicited reports, to find out what a button or switch does.
+        let secs: u64 = arg.and_then(|s| s.parse().ok()).unwrap_or(30);
+        let mut hid = headset::Headset::new();
+        let mut last: Vec<u8> = Vec::new();
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ");
+        // Every collection, so buttons reported elsewhere (e.g. telephony "phone mute") show up too.
+        let all = headset::open_all_collections();
+        for (page, usage, _) in &all {
+            println!("collection usage page {page:#06x} usage {usage:#06x}");
+        }
+        let start = std::time::Instant::now();
+        while start.elapsed().as_secs() < secs {
+            let mut buf = [0u8; 64];
+            for (page, usage, dev) in &all {
+                while let Ok(n) = dev.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    // The app's own status and settings replies (0x01 0xb0/0x80/0x20) aren't button presses.
+                    if *page == 0xffc0 && buf[0] == 0x01 && matches!(buf[1], 0xb0 | 0x80 | 0x20) {
+                        continue;
+                    }
+                    println!("{:6.1}s [{page:#06x}/{usage:#06x}] {}", start.elapsed().as_secs_f32(), hex(&buf[..n.min(24)]));
+                }
+            }
+            hid.drain_events();
+            if let Some(s) = hid.poll() {
+                if s.raw != last {
+                    let changed: Vec<String> =
+                        s.raw.iter().enumerate().filter(|(i, b)| last.get(*i) != Some(*b)).map(|(i, _)| i.to_string()).collect();
+                    let t = start.elapsed().as_secs_f32();
+                    println!(
+                        "{t:6.1}s status {}{}",
+                        hex(&s.raw[..s.raw.len().min(24)]),
+                        if last.is_empty() { String::new() } else { format!("   changed bytes: {}", changed.join(",")) }
+                    );
+                    last = s.raw;
+                }
+            } else {
+                println!("no headset dongle found");
+                return 1;
+            }
+            for r in hid.unsolicited.drain(..) {
+                println!("{:6.1}s event  {}", start.elapsed().as_secs_f32(), hex(&r[..r.len().min(24)]));
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        return 0;
+    }
     if command == "default" {
         // sonar-deck default <device name>: make an output or input the Windows default (all roles).
         let result = (|| -> anyhow::Result<String> {
@@ -1183,10 +1234,9 @@ fn cli(command: &str, arg: Option<&str>) -> i32 {
         }
         if let Some(h) = &snap.headset {
             out += &format!(
-                "headset  {} power={}{}\n",
+                "headset  {} power={}\n",
                 h.model,
-                h.connected.map_or("unknown".into(), |c| if c { "on".to_string() } else { "off".to_string() }),
-                if h.mic_muted == Some(true) { " mic=muted" } else { "" }
+                h.connected.map_or("unknown".into(), |c| if c { "on".to_string() } else { "off".to_string() })
             );
         }
         Ok(out)

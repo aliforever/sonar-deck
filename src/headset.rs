@@ -25,8 +25,6 @@ pub struct Status {
     pub raw: Vec<u8>,
     /// Whether the headset itself (not just the dongle) is powered on and linked.
     pub connected: Option<bool>,
-    /// The headset's own mic mute (button or boom flipped up).
-    pub mic_muted: Option<bool>,
     /// Battery in the headset, percent.
     pub battery: Option<u8>,
     /// Spare hot-swap battery charging in the base station, percent.
@@ -101,11 +99,21 @@ pub struct Headset {
     events: Option<HidDevice>,
     /// Last knob position reported by the base station.
     pub knob_db: Option<u8>,
+    /// Reports that arrived without being asked for (other than knob turns), for diagnostics.
+    pub unsolicited: Vec<Vec<u8>>,
 }
 
 impl Headset {
     pub fn new() -> Self {
-        Self { api: HidApi::new().ok(), dev: None, settings: None, last_status: Vec::new(), events: None, knob_db: None }
+        Self {
+            api: HidApi::new().ok(),
+            dev: None,
+            settings: None,
+            last_status: Vec::new(),
+            events: None,
+            knob_db: None,
+            unsolicited: Vec::new(),
+        }
     }
 
     fn open(&mut self) -> Option<()> {
@@ -150,6 +158,10 @@ impl Headset {
                     if buf[0] == 0x07 && buf[1] == EVENT_KNOB {
                         self.knob_db = Some(buf[2]);
                         crate::debug_log(&format!("knob event {}", buf[2]));
+                    } else {
+                        if self.unsolicited.len() < 64 {
+                            self.unsolicited.push(buf[..n].to_vec());
+                        }
                     }
                 }
                 Ok(_) => break,
@@ -188,7 +200,12 @@ impl Headset {
                     status.raw = raw;
                     return Some(status);
                 }
-                Ok(_) => continue,
+                Ok(n) => {
+                    if n > 0 && self.unsolicited.len() < 64 {
+                        self.unsolicited.push(buf[..n].to_vec());
+                    }
+                    continue;
+                }
                 Err(_) => {
                     self.dev = None;
                     return None;
@@ -197,6 +214,19 @@ impl Headset {
         }
         Some(Status { model: model.to_string(), ..Default::default() })
     }
+}
+
+/// Opens every HID collection of a supported dongle for diagnostics: (usage page, usage, device).
+pub fn open_all_collections() -> Vec<(u16, u16, HidDevice)> {
+    let Ok(api) = HidApi::new() else { return Vec::new() };
+    api.device_list()
+        .filter(|i| i.vendor_id() == VID && DONGLES.iter().any(|(pid, _)| i.product_id() == *pid))
+        .filter_map(|i| {
+            let dev = i.open_device(&api).ok()?;
+            let _ = dev.set_blocking_mode(false);
+            Some((i.usage_page(), i.usage(), dev))
+        })
+        .collect()
 }
 
 impl Headset {
@@ -374,7 +404,8 @@ impl Headset {
 
 /// Reply bytes (after report ID and command): 2 bt_power_default, 3 bt_call_default,
 /// 4 bt_connection_mode, 5 bt_connection_status, 6 headset_batt_level, 7 charger_batt_level,
-/// 8 transparent, 9 mic_mute, 10 transparent_anc_mode, 11 muted_mic_brightness, 12 inactivity_timer,
+/// 8 transparent, 9 mic_mute (stays 0 on the Nova Elite: its mute button isn't reported over USB at all,
+/// checked with `sonar-deck hidwatch`), 10 transparent_anc_mode, 11 muted_mic_brightness, 12 inactivity_timer,
 /// 13 wireless_mode, 14 radio_connection_status, 15 charging_status, 16 active_noise_cancellation.
 fn decode(raw: &[u8]) -> Status {
     if raw.len() < 16 {
@@ -385,7 +416,6 @@ fn decode(raw: &[u8]) -> Status {
     let percent = |b: u8| (b <= 100).then_some(b);
     Status {
         connected: Some(connected),
-        mic_muted: connected.then_some(raw[9] != 0),
         battery: if connected { percent(raw[6]) } else { None },
         spare_battery: percent(raw[7]),
         charging: connected.then(|| match raw[15] {
