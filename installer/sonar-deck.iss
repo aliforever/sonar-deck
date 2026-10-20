@@ -40,6 +40,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"
 Source: "..\README.md"; DestDir: "{app}"
+Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"
+; DeepFilterNet3's low-latency model for the mic chain (36 MB); fetched by the release workflow.
+Source: "..\assets\models\DeepFilterNet3_ll_onnx.tar.gz"; DestDir: "{app}\models"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\Sonar Deck"; Filename: "{app}\sonar-deck.exe"

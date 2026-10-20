@@ -29,6 +29,16 @@ export struct AppItem {
     active: bool,
 }
 
+// One Mic Mixer source as shown in the UI.
+export struct MicSource {
+    title: string,
+    hint: string,
+    device-index: int,
+    gain: float,
+    muted: bool,
+    level: float,
+}
+
 export struct EqItem {
     name: string,
     active: bool,
@@ -330,6 +340,35 @@ export component AppWindow inherits Window {
     in property <[EqItem]> eq-items;
     in property <string> eq-count;
 
+    // Mic Mixer
+    in property <bool> mic-enabled;
+    in property <bool> mic-cable-found;
+    in property <bool> mic-running;
+    in property <string> mic-status;
+    in property <string> mic-output-name;
+    in property <float> mic-out-level;
+    in property <[MicSource]> mic-sources;
+    in property <[string]> mic-input-choices;
+    in property <[string]> mic-playback-choices;
+    in property <[string]> mic-changer-choices;
+    in property <bool> mic-denoise;
+    in property <float> mic-denoise-strength;
+    in property <bool> mic-eq;
+    in property <bool> mic-gate;
+    in property <bool> mic-low-latency;
+    // 0 Natural, 1 Clear, 2 Broadcast
+    in property <int> mic-preset;
+    in property <bool> mic-highpass;
+    in property <bool> mic-leveler;
+    in property <float> mic-leveler-amount;
+    in property <bool> mic-deesser;
+    in property <bool> mic-bypass;
+    in property <float> mic-gate-db;
+    in property <string> mic-fx-info;
+    in property <bool> mic-listen;
+    // 0 idle, 1 recording the test clip, 2 playing it back
+    in property <int> mic-test-state;
+
     in-out property <int> page: 0;
 
     callback strip-volume(string, float);
@@ -352,9 +391,17 @@ export component AppWindow inherits Window {
     callback app-mute(string);
     callback app-group(string, int);
     callback eq-filter(string);
+    callback mic-enable(bool);
+    callback mic-source-device(int, int);
+    callback mic-source-gain(int, float);
+    callback mic-source-mute(int);
+    callback mic-use-as-default();
+    callback mic-fx-set(string, float);
+    callback mic-listen-toggled(bool);
+    callback mic-test();
     callback eq-apply(string);
 
-    property <[string]> page-titles: ["Mixer", "Apps", "Headset", "Devices", "Settings"];
+    property <[string]> page-titles: ["Mixer", "Apps", "Mic", "Headset", "Devices", "Settings"];
     property <[string]> timer-options: ["Never", "1 min", "5 min", "10 min", "15 min", "30 min", "60 min"];
 
     // Backdrop
@@ -396,9 +443,10 @@ export component AppWindow inherits Window {
                 }
                 NavItem { text: "Mixer"; icon: Icons.mixer; active: root.page == 0; clicked => { root.page = 0; } }
                 NavItem { text: "Apps"; icon: Icons.aux; active: root.page == 1; clicked => { root.page = 1; } }
-                NavItem { text: "Headset"; icon: Icons.headset; active: root.page == 2; clicked => { root.page = 2; } }
-                NavItem { text: "Devices"; icon: Icons.speaker; active: root.page == 3; clicked => { root.page = 3; } }
-                NavItem { text: "Settings"; icon: Icons.settings; active: root.page == 4; clicked => { root.page = 4; } }
+                NavItem { text: "Mic"; icon: Icons.mic; active: root.page == 2; clicked => { root.page = 2; } }
+                NavItem { text: "Headset"; icon: Icons.headset; active: root.page == 3; clicked => { root.page = 3; } }
+                NavItem { text: "Devices"; icon: Icons.speaker; active: root.page == 4; clicked => { root.page = 4; } }
+                NavItem { text: "Settings"; icon: Icons.settings; active: root.page == 5; clicked => { root.page = 5; } }
                 Rectangle { vertical-stretch: 1; }
                 if root.update-version != "": Pill {
                     text: "Update " + root.update-version + " available";
@@ -572,8 +620,192 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // ---------------- Mic ----------------
+            if root.page == 2: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                spacing: 16px;
+                padding-right: 12px;
+                alignment: start;
+                Card {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Icon { commands: Icons.mic; tint: #ff4d6d; }
+                            Text { text: "Virtual microphone"; color: Theme.text; font-size: 17px; font-weight: 800; }
+                            Rectangle { horizontal-stretch: 1; }
+                            if root.mic-cable-found: VerticalLayout {
+                                alignment: center;
+                                ToggleSwitch { checked: root.mic-enabled; accent: #ff4d6d; toggled(v) => { root.mic-enable(v); } }
+                            }
+                        }
+                        if !root.mic-cable-found: Text {
+                            text: "Sonar Deck mixes your sources into a virtual cable, and apps like Discord use the cable as their microphone. Install the free VB-CABLE driver (one time, needs a restart), then come back here.";
+                            color: Theme.dim;
+                            wrap: word-wrap;
+                        }
+                        if !root.mic-cable-found: HorizontalLayout {
+                            alignment: start;
+                            Pill { text: "Get VB-CABLE"; pad: 16px; active: true; accent: #ff4d6d; clicked => { root.open-url("https://vb-audio.com/Cable/"); } }
+                        }
+                        if root.mic-cable-found: HorizontalLayout {
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                spacing: 6px;
+                                Text {
+                                    text: root.mic-running ? "Mixing into " + root.mic-output-name + ". In Discord, OBS or games pick \"CABLE Output\" as the microphone." : (root.mic-enabled ? "Starting…" : "Off");
+                                    color: root.mic-running ? Theme.good : Theme.dim;
+                                    wrap: word-wrap;
+                                }
+                                LevelBar { level: root.mic-out-level; }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Pill { text: "Use as default mic"; pad: 14px; clicked => { root.mic-use-as-default(); } }
+                            }
+                        }
+                        if root.mic-cable-found && root.mic-running: HorizontalLayout {
+                            spacing: 10px;
+                            Pill {
+                                horizontal-stretch: 0;
+                                text: "Listen";
+                                active: root.mic-listen;
+                                accent: #ff4d6d;
+                                pad: 14px;
+                                clicked => { root.mic-listen-toggled(!root.mic-listen); }
+                            }
+                            Pill {
+                                horizontal-stretch: 0;
+                                text: root.mic-test-state == 1 ? "Recording… talk now" : root.mic-test-state == 2 ? "Playing back…" : "Test: record 5 s";
+                                active: root.mic-test-state != 0;
+                                accent: #ff4d6d;
+                                pad: 14px;
+                                clicked => { if root.mic-test-state == 0 { root.mic-test(); } }
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: "Hear the final mic, exactly what apps get, on your current output. The test records 5 s and plays it back, which is the best way to judge it. Turn headset sidetone off while listening live.";
+                                color: Theme.dim;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                                vertical-alignment: center;
+                            }
+                        }
+                        if root.mic-status != "": Text { text: root.mic-status; color: Theme.bad.brighter(0.3); wrap: word-wrap; font-size: 11px; }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    for src[i] in root.mic-sources: Card {
+                        horizontal-stretch: 1;
+                        min-width: 220px;
+                        preferred-width: 320px;
+                        max-width: 4000px;
+                        opacity: root.mic-enabled ? 1 : 0.55;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            alignment: start;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Icon { commands: i == 0 ? Icons.mic : i == 1 ? Icons.speaker : Icons.wave; tint: i == 0 ? #ff4d6d : i == 1 ? #4da3ff : #b36bff; }
+                                Text { text: src.title; color: Theme.text; font-size: 16px; font-weight: 800; }
+                            }
+                            Text { text: src.hint; color: Theme.dim; wrap: word-wrap; font-size: 12px; }
+                            ComboBox {
+                                model: i == 0 ? root.mic-input-choices : i == 1 ? root.mic-playback-choices : root.mic-changer-choices;
+                                current-index: src.device-index;
+                                selected => { root.mic-source-device(i, self.current-index); }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                HSlider {
+                                    horizontal-stretch: 1;
+                                    value: src.gain;
+                                    maximum: 2;
+                                    accent: i == 0 ? #ff4d6d : i == 1 ? #4da3ff : #b36bff;
+                                    moved(v) => { root.mic-source-gain(i, v); }
+                                }
+                                Text { text: round(src.gain * 100) + "%"; color: Theme.text; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
+                                RoundButton { icon: src.muted ? Icons.muted : (i == 0 ? Icons.mic : Icons.speaker); active: src.muted; clicked => { root.mic-source-mute(i); } }
+                            }
+                            LevelBar { level: src.muted ? 0 : src.level; }
+                            if i == 0: VerticalLayout {
+                                spacing: 2px;
+                                Rectangle { height: 1px; background: #ffffff10; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    padding-top: 6px;
+                                    padding-bottom: 4px;
+                                    Segmented {
+                                        horizontal-stretch: 1;
+                                        options: ["Natural", "Clear", "Broadcast"];
+                                        index: root.mic-preset;
+                                        accent: #ff4d6d;
+                                        changed(i) => { root.mic-fx-set("preset", i); }
+                                    }
+                                    Pill {
+                                        horizontal-stretch: 0;
+                                        text: "Bypass (A/B)";
+                                        active: root.mic-bypass;
+                                        accent: #ff4d6d;
+                                        pad: 12px;
+                                        clicked => { root.mic-fx-set("bypass", root.mic-bypass ? 0 : 1); }
+                                    }
+                                }
+                                ToggleRow { text: "AI noise suppression"; on: root.mic-denoise; toggled(v) => { root.mic-fx-set("denoise", v ? 1 : 0); } }
+                                if root.mic-denoise: HorizontalLayout {
+                                    spacing: 10px;
+                                    HSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.mic-denoise-strength;
+                                        accent: #ff4d6d;
+                                        moved(v) => { root.mic-fx-set("denoise-strength", v); }
+                                    }
+                                    Text { text: round(root.mic-denoise-strength * 100) + "%"; color: Theme.text; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
+                                }
+                                if root.mic-denoise: ToggleRow { text: "Low latency (about 20 ms less delay)"; on: root.mic-low-latency; toggled(v) => { root.mic-fx-set("low-latency", v ? 1 : 0); } }
+                                ToggleRow { text: "Voice EQ (preset)"; on: root.mic-eq; toggled(v) => { root.mic-fx-set("eq", v ? 1 : 0); } }
+                                ToggleRow { text: "Leveler (even volume)"; on: root.mic-leveler; toggled(v) => { root.mic-fx-set("leveler", v ? 1 : 0); } }
+                                if root.mic-leveler: HorizontalLayout {
+                                    spacing: 10px;
+                                    HSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.mic-leveler-amount;
+                                        accent: #ff4d6d;
+                                        moved(v) => { root.mic-fx-set("leveler-amount", v); }
+                                    }
+                                    Text { text: round(root.mic-leveler-amount * 100) + "%"; color: Theme.text; width: 44px; horizontal-alignment: right; vertical-alignment: center; }
+                                }
+                                ToggleRow { text: "De-esser (softer \"s\" sounds)"; on: root.mic-deesser; toggled(v) => { root.mic-fx-set("deesser", v ? 1 : 0); } }
+                                ToggleRow { text: "Rumble and pop filter"; on: root.mic-highpass; toggled(v) => { root.mic-fx-set("highpass", v ? 1 : 0); } }
+                                ToggleRow { text: "Noise gate"; on: root.mic-gate; toggled(v) => { root.mic-fx-set("gate", v ? 1 : 0); } }
+                                if root.mic-gate: HorizontalLayout {
+                                    spacing: 10px;
+                                    HSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.mic-gate-db;
+                                        minimum: -80;
+                                        maximum: -20;
+                                        accent: #ff4d6d;
+                                        moved(v) => { root.mic-fx-set("gate-db", v); }
+                                    }
+                                    Text { text: round(root.mic-gate-db) + " dB"; color: Theme.text; width: 54px; horizontal-alignment: right; vertical-alignment: center; }
+                                }
+                                if root.mic-fx-info != "": Text { text: root.mic-fx-info; color: Theme.dim; font-size: 11px; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                }
+                }
+            }
+
             // ---------------- Headset ----------------
-            if root.page == 2 && !root.hs-available: Card {
+            if root.page == 3 && !root.hs-available: Card {
                 vertical-stretch: 1;
                 VerticalLayout {
                     alignment: center;
@@ -582,7 +814,7 @@ export component AppWindow inherits Window {
                     Text { text: "Settings are read from and saved to the headset itself."; color: Theme.dim; horizontal-alignment: center; }
                 }
             }
-            if root.page == 2 && root.hs-available: ScrollView {
+            if root.page == 3 && root.hs-available: ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 16px;
@@ -756,7 +988,7 @@ export component AppWindow inherits Window {
             }
 
             // ---------------- Devices ----------------
-            if root.page == 3: ScrollView {
+            if root.page == 4: ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 16px;
@@ -808,7 +1040,7 @@ export component AppWindow inherits Window {
             }
 
             // ---------------- Settings ----------------
-            if root.page == 4: ScrollView {
+            if root.page == 5: ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 16px;

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.2
+
+- **Virtual microphone** (Mic page): mixes your mic with desktop audio and a voice changer into VB-CABLE, so
+  apps can use "CABLE Output" as their microphone.
+- **Mic processing**, replacing SteelSeries Sonar's mic chain: DeepFilterNet3 AI noise suppression (like
+  ClearCast), voice presets (Natural, Clear = Sonar's "Less Nasal", Broadcast), leveler, de-esser, rumble and
+  pop filter, noise gate and a -1 dBFS limiter. Only the noise model adds delay (about 30 ms, or 10 ms with
+  the optional low-latency model).
+- **Listen mode**: hear the final mic live, or record 5 s and play it back; Bypass for A/B comparisons.
+- Command line: `sonar-deck default <device>` sets the Windows default device; `sonar-deck micfx in.wav
+  out.wav` runs the mic processing over a recording; `status` shows when the headset mic is muted.
+- Prefers the stereo "CABLE Input" over VB-CABLE's 16-channel variant.
+
 ## 0.1.1
 
 - The exe no longer needs the Visual C++ Redistributable (the C runtime is linked statically).

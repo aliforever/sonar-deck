@@ -5,6 +5,8 @@ mod autostart;
 mod deck;
 mod headset;
 mod instance;
+mod micfx;
+mod micmix;
 mod tray;
 mod update;
 
@@ -54,6 +56,149 @@ fn show_eq(ui: &AppWindow, st: &UiState) {
 
 thread_local! {
     static STATE: RefCell<UiState> = RefCell::new(UiState::default());
+    static MIC: RefCell<Option<MicState>> = const { RefCell::new(None) };
+}
+
+/// The Mic Mixer's config and its link to the audio thread.
+struct MicState {
+    cfg: micmix::Config,
+    tx: Sender<micmix::Config>,
+    shared: std::sync::Arc<micmix::Shared>,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+}
+
+impl MicState {
+    fn commit(&self) {
+        self.cfg.save();
+        let _ = self.tx.send(self.cfg.clone());
+    }
+
+    /// Device for a picker index: (name, loopback). Index 0 is "Off".
+    fn device_at(&self, source: usize, index: i32) -> (String, bool) {
+        let i = index as usize;
+        if index <= 0 {
+            return (String::new(), false);
+        }
+        match source {
+            micmix::MIC => (self.inputs.get(i - 1).cloned().unwrap_or_default(), false),
+            micmix::DESKTOP => (self.outputs.get(i - 1).cloned().unwrap_or_default(), true),
+            _ if i <= self.inputs.len() => (self.inputs[i - 1].clone(), false),
+            _ => (self.outputs.get(i - 1 - self.inputs.len()).cloned().unwrap_or_default(), true),
+        }
+    }
+
+    fn index_of(&self, source: usize) -> i32 {
+        let s = &self.cfg.sources[source];
+        if s.device.is_empty() {
+            return 0;
+        }
+        let pos = |list: &[String]| list.iter().position(|n| *n == s.device).map(|p| p as i32 + 1);
+        match (source, s.loopback) {
+            (micmix::MIC, _) | (micmix::CHANGER, false) => pos(&self.inputs).unwrap_or(-1),
+            (micmix::DESKTOP, _) => pos(&self.outputs).unwrap_or(-1),
+            _ => pos(&self.outputs).map(|p| p + self.inputs.len() as i32).unwrap_or(-1),
+        }
+    }
+}
+
+/// Refreshes the Mic page's device lists after a new snapshot.
+fn mic_refresh(ui: &AppWindow, snap: &Snapshot) {
+    MIC.with(|m| {
+        let mut m = m.borrow_mut();
+        let Some(m) = m.as_mut() else { return };
+        let outputs: Vec<String> = snap.outputs.iter().map(|d| d.name.clone()).collect();
+        let cable = micmix::find_cable(&outputs);
+        ui.set_mic_cable_found(cable.is_some());
+        if let Some(c) = &cable {
+            ui.set_mic_output_name(c.as_str().into());
+            if m.cfg.output != *c {
+                m.cfg.output = c.clone();
+                m.commit();
+            }
+        }
+        // The cable itself is never offered as a source, so the mix can't feed back into itself.
+        m.inputs = snap.inputs.iter().map(|d| d.name.clone()).filter(|n| !n.starts_with("CABLE Output")).collect();
+        m.outputs = outputs.into_iter().filter(|n| Some(n) != cable.as_ref()).collect();
+        let off = || vec![SharedString::from("Off")];
+        let mut ins = off();
+        ins.extend(m.inputs.iter().map(SharedString::from));
+        let mut outs = off();
+        outs.extend(m.outputs.iter().map(SharedString::from));
+        let mut changer = ins.clone();
+        changer.extend(m.outputs.iter().map(|n| SharedString::from(format!("Playback: {n}"))));
+        sync(&ui.get_mic_input_choices(), ins);
+        sync(&ui.get_mic_playback_choices(), outs);
+        sync(&ui.get_mic_changer_choices(), changer);
+        ui.set_mic_enabled(m.cfg.enabled);
+        let model = ui.get_mic_sources();
+        for i in 0..model.row_count() {
+            if let Some(mut row) = model.row_data(i) {
+                let idx = m.index_of(i);
+                if row.device_index != idx {
+                    row.device_index = idx;
+                    model.set_row_data(i, row);
+                }
+            }
+        }
+    });
+}
+
+/// Shows the mic processing settings.
+fn mic_show_fx(ui: &AppWindow, fx: &micfx::Fx) {
+    ui.set_mic_denoise(fx.denoise);
+    ui.set_mic_denoise_strength(fx.denoise_strength);
+    ui.set_mic_low_latency(fx.low_latency);
+    ui.set_mic_preset(micfx::Preset::ALL.iter().position(|p| *p == fx.preset).unwrap_or(1) as i32);
+    ui.set_mic_eq(fx.eq);
+    ui.set_mic_highpass(fx.highpass);
+    ui.set_mic_gate(fx.gate);
+    ui.set_mic_gate_db(fx.gate_db);
+    ui.set_mic_leveler(fx.leveler);
+    ui.set_mic_leveler_amount(fx.leveler_amount);
+    ui.set_mic_deesser(fx.deesser);
+    ui.set_mic_bypass(fx.bypass);
+}
+
+/// Updates the Mic page's meters and status (called on a timer).
+fn mic_meters(ui: &AppWindow) {
+    MIC.with(|m| {
+        let m = m.borrow();
+        let Some(m) = m.as_ref() else { return };
+        STATE.with(|st| {
+            let mut st = st.borrow_mut();
+            let model = ui.get_mic_sources();
+            for i in 0..model.row_count() {
+                if let Some(mut row) = model.row_data(i) {
+                    row.level = meter(&mut st, &format!("micsrc{i}"), m.shared.take_peak(i));
+                    model.set_row_data(i, row);
+                }
+            }
+            ui.set_mic_out_level(meter(&mut st, "micout", m.shared.take_peak(3)));
+        });
+        let running = m.shared.running.load(std::sync::atomic::Ordering::Relaxed);
+        ui.set_mic_running(running);
+        let cost = m.shared.fx.cost_us.load(std::sync::atomic::Ordering::Relaxed);
+        let fx = &m.cfg.fx;
+        let model = if fx.low_latency && !m.shared.fx.ll_missing.load(std::sync::atomic::Ordering::Relaxed) {
+            "DeepFilterNet3 low latency"
+        } else {
+            "DeepFilterNet3"
+        };
+        let mut info = match (running && fx.denoise && !fx.bypass, cost) {
+            (false, _) => String::new(),
+            (true, 0) => format!("{model} · starting…"),
+            (true, us) => format!("{model} · up to {:.1} ms per 10 ms of audio", (us as f32 / 1000.0).max(0.1)),
+        };
+        if fx.denoise && fx.low_latency && m.shared.fx.ll_missing.load(std::sync::atomic::Ordering::Relaxed) {
+            info += "\nThe low-latency model file is missing (models\\DeepFilterNet3_ll_onnx.tar.gz next to the app), so the standard model runs.";
+        }
+        ui.set_mic_fx_info(info.into());
+        let monitor = &m.shared.monitor;
+        ui.set_mic_listen(monitor.live.load(std::sync::atomic::Ordering::Relaxed));
+        ui.set_mic_test_state(monitor.test.load(std::sync::atomic::Ordering::Relaxed) as i32);
+        ui.set_mic_status(m.shared.status.lock().map(|s| s.clone()).unwrap_or_default().into());
+    });
 }
 
 /// "Speakers (Realtek USB Audio)" -> "Speakers", "Headphones (Arctis Nova Elite)" -> "Arctis Nova Elite".
@@ -324,6 +469,7 @@ fn apply(ui: &AppWindow, snap: Snapshot) {
             launch_at_login: ui.get_launch_at_login(),
             connected: true,
         });
+        mic_refresh(ui, &snap);
         st.snap = snap;
     });
 }
@@ -621,6 +767,120 @@ fn wire(ui: &AppWindow, tx: Sender<Cmd>) {
         s(Cmd::SetIgnoreKnob(!on));
     });
 
+    let w = ui.as_weak();
+    ui.on_mic_enable(move |on| {
+        if let Some(ui) = w.upgrade() {
+            ui.set_mic_enabled(on);
+        }
+        MIC.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.cfg.enabled = on;
+                m.commit();
+            }
+        });
+    });
+
+    ui.on_mic_source_device(|src, index| {
+        MIC.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                let (device, loopback) = m.device_at(src as usize, index);
+                let s = &mut m.cfg.sources[src as usize];
+                s.device = device;
+                s.loopback = loopback;
+                m.commit();
+            }
+        });
+    });
+
+    let w = ui.as_weak();
+    ui.on_mic_source_gain(move |src, v| {
+        if let Some(ui) = w.upgrade() {
+            let model = ui.get_mic_sources();
+            if let Some(mut row) = model.row_data(src as usize) {
+                row.gain = v;
+                model.set_row_data(src as usize, row);
+            }
+        }
+        MIC.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.cfg.sources[src as usize].gain = v;
+                // Gains apply instantly through shared atomics; the audio thread skips a restart.
+                m.shared.apply_levels(&m.cfg);
+                m.commit();
+            }
+        });
+    });
+
+    let w = ui.as_weak();
+    ui.on_mic_source_mute(move |src| {
+        let Some(ui) = w.upgrade() else { return };
+        let model = ui.get_mic_sources();
+        let Some(mut row) = model.row_data(src as usize) else { return };
+        row.muted = !row.muted;
+        model.set_row_data(src as usize, row.clone());
+        MIC.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.cfg.sources[src as usize].muted = row.muted;
+                m.commit();
+            }
+        });
+    });
+
+    let w = ui.as_weak();
+    ui.on_mic_fx_set(move |key, v| {
+        MIC.with(|m| {
+            let mut m = m.borrow_mut();
+            let Some(m) = m.as_mut() else { return };
+            let fx = &mut m.cfg.fx;
+            match key.as_str() {
+                "denoise" => fx.denoise = v != 0.0,
+                "denoise-strength" => fx.denoise_strength = v.clamp(0.0, 1.0),
+                "low-latency" => fx.low_latency = v != 0.0,
+                "preset" => fx.apply_preset(micfx::Preset::ALL[(v as usize).min(micfx::Preset::ALL.len() - 1)]),
+                "eq" => fx.eq = v != 0.0,
+                "highpass" => fx.highpass = v != 0.0,
+                "gate" => fx.gate = v != 0.0,
+                "gate-db" => fx.gate_db = v.clamp(-80.0, -20.0),
+                "leveler" => fx.leveler = v != 0.0,
+                "leveler-amount" => fx.leveler_amount = v.clamp(0.0, 1.0),
+                "deesser" => fx.deesser = v != 0.0,
+                "bypass" => fx.bypass = v != 0.0,
+                _ => return,
+            }
+            // Applies live; the audio thread doesn't restart for these.
+            m.shared.fx.set(&m.cfg.fx);
+            m.commit();
+            if let Some(ui) = w.upgrade() {
+                mic_show_fx(&ui, &m.cfg.fx);
+            }
+        });
+    });
+
+    ui.on_mic_listen_toggled(|on| {
+        // Listening is for this session only, so it never starts on its own.
+        MIC.with(|m| {
+            if let Some(m) = m.borrow().as_ref() {
+                m.shared.monitor.live.store(on, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+    });
+
+    ui.on_mic_test(|| {
+        MIC.with(|m| {
+            if let Some(m) = m.borrow().as_ref() {
+                m.shared.monitor.start_test();
+            }
+        });
+    });
+
+    let s = send.clone();
+    ui.on_mic_use_as_default(move || {
+        let cable = STATE.with(|st| st.borrow().snap.inputs.iter().find(|d| d.name.starts_with("CABLE Output")).map(|d| d.id.clone()));
+        if let Some(id) = cable {
+            s(Cmd::SetDefault(id));
+        }
+    });
+
     let (s, w) = (send.clone(), ui.as_weak());
     ui.on_update_check_toggled(move |on| {
         if let Some(ui) = w.upgrade() {
@@ -652,6 +912,86 @@ fn attach_console() {}
 /// `sonar-deck status|toggle|headset|speakers|auto` or `sonar-deck login [on|off]`
 fn cli(command: &str, arg: Option<&str>) -> i32 {
     attach_console();
+    if command == "micfx" {
+        // sonar-deck micfx <in.wav> <out.wav> [strength 0..1] [--ll] [--preset=natural|clear|broadcast] [--bypass]:
+        // run the mic chain over a recording.
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        let (flags, a): (Vec<String>, Vec<String>) = args.into_iter().partition(|s| s.starts_with("--"));
+        if a.len() < 2 {
+            eprintln!("usage: sonar-deck micfx <in.wav> <out.wav> [strength 0..1] [--ll] [--preset=natural|clear|broadcast] [--bypass]");
+            return 2;
+        }
+        let result = (|| -> anyhow::Result<String> {
+            let (rate, input) = micfx::read_wav(&a[0])?;
+            anyhow::ensure!(rate == micfx::RATE, "the recording must be 48 kHz (this one is {rate} Hz)");
+            let mut fx = micfx::Fx::default();
+            if let Some(s) = a.get(2) {
+                fx.denoise_strength = s.parse()?;
+            }
+            for f in &flags {
+                match f.as_str() {
+                    "--ll" => fx.low_latency = true,
+                    "--bypass" => fx.bypass = true,
+                    "--preset=natural" => fx.apply_preset(micfx::Preset::Natural),
+                    "--preset=clear" => fx.apply_preset(micfx::Preset::Clear),
+                    "--preset=broadcast" => fx.apply_preset(micfx::Preset::Broadcast),
+                    _ => anyhow::bail!("unknown option {f}"),
+                }
+            }
+            let live = micfx::Live::default();
+            live.set(&fx);
+            let mut chain = micfx::Chain::new();
+            let mut out = Vec::with_capacity(input.len());
+            let t = std::time::Instant::now();
+            chain.process(&input, &live, &mut |b| out.extend_from_slice(b));
+            micfx::write_wav(&a[1], rate, &out)?;
+            let secs = input.len() as f32 / rate as f32;
+            Ok(format!("processed {secs:.1} s of audio in {:.2} s -> {}", t.elapsed().as_secs_f32(), a[1]))
+        })();
+        return match result {
+            Ok(s) => {
+                println!("{s}");
+                0
+            }
+            Err(e) => {
+                eprintln!("sonar-deck: {e:#}");
+                1
+            }
+        };
+    }
+    if command == "micmix" {
+        // sonar-deck micmix <output> <mic|-> <desktop output|-> [seconds]: run the mic mixer and print levels.
+        let a: Vec<String> = std::env::args().skip(2).collect();
+        if a.len() < 3 {
+            eprintln!("usage: sonar-deck micmix <output device> <mic|-> <desktop output|-> [seconds]");
+            return 2;
+        }
+        let pick = |s: &str, loopback: bool| micmix::Source {
+            device: if s == "-" { String::new() } else { s.to_string() },
+            loopback,
+            ..Default::default()
+        };
+        let mut cfg = micmix::Config { enabled: true, output: a[0].clone(), ..Default::default() };
+        cfg.sources[micmix::MIC] = pick(&a[1], false);
+        cfg.sources[micmix::DESKTOP] = pick(&a[2], true);
+        let secs: u64 = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(5);
+        let shared = std::sync::Arc::new(micmix::Shared::default());
+        let tx = micmix::spawn(shared.clone());
+        let _ = tx.send(cfg);
+        for t in 1..=secs {
+            std::thread::sleep(Duration::from_secs(1));
+            println!(
+                "t={t}s running={} mic={:.3} desktop={:.3} out={:.3} denoise={}us {}",
+                shared.running.load(std::sync::atomic::Ordering::Relaxed),
+                shared.take_peak(micmix::MIC),
+                shared.take_peak(micmix::DESKTOP),
+                shared.take_peak(3),
+                shared.fx.cost_us.load(std::sync::atomic::Ordering::Relaxed),
+                shared.status.lock().unwrap()
+            );
+        }
+        return 0;
+    }
     if command == "uninstall" {
         // Used by the installer's uninstaller: remove the login entry and the settings folder.
         let _ = autostart::set(false);
@@ -742,6 +1082,37 @@ fn cli(command: &str, arg: Option<&str>) -> i32 {
             }
         };
     }
+    if command == "default" {
+        // sonar-deck default <device name>: make an output or input the Windows default (all roles).
+        let result = (|| -> anyhow::Result<String> {
+            let name = std::env::args().skip(2).collect::<Vec<_>>().join(" ");
+            anyhow::ensure!(!name.is_empty(), "usage: sonar-deck default <device name>");
+            let mut audio = audio::Audio::new()?;
+            let state = audio.state()?;
+            let dev = state
+                .outputs
+                .iter()
+                .chain(&state.inputs)
+                .find(|d| d.name == name)
+                .ok_or_else(|| anyhow::anyhow!("no device named {name}"))?;
+            audio.set_default(&dev.id)?;
+            Ok(format!(
+                "default: {}
+",
+                dev.name
+            ))
+        })();
+        return match result {
+            Ok(s) => {
+                print!("{s}");
+                0
+            }
+            Err(e) => {
+                eprintln!("sonar-deck: {e:#}");
+                1
+            }
+        };
+    }
     if command == "volume" {
         let result = (|| -> anyhow::Result<String> {
             let mut audio = audio::Audio::new()?;
@@ -812,9 +1183,10 @@ fn cli(command: &str, arg: Option<&str>) -> i32 {
         }
         if let Some(h) = &snap.headset {
             out += &format!(
-                "headset  {} power={}\n",
+                "headset  {} power={}{}\n",
                 h.model,
-                h.connected.map_or("unknown".into(), |c| if c { "on".to_string() } else { "off".to_string() })
+                h.connected.map_or("unknown".into(), |c| if c { "on".to_string() } else { "off".to_string() }),
+                if h.mic_muted == Some(true) { " mic=muted" } else { "" }
             );
         }
         Ok(out)
@@ -856,7 +1228,44 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_apps(ModelRc::new(VecModel::<AppItem>::default()));
     ui.set_eq_items(ModelRc::new(VecModel::<EqItem>::default()));
     ui.set_launch_at_login(autostart::is_enabled());
-    // Open on a given page (0 Mixer, 1 Apps, 2 Headset, 3 Devices, 4 Settings).
+
+    // Mic Mixer: its own audio thread, the saved config, and a timer for the meters.
+    let mic_shared = std::sync::Arc::new(micmix::Shared::default());
+    let mic_tx = micmix::spawn(mic_shared.clone());
+    let mic_cfg = micmix::Config::load();
+    let _ = mic_tx.send(mic_cfg.clone());
+    let source = |title: &str, hint: &str, s: &micmix::Source| MicSource {
+        title: title.into(),
+        hint: hint.into(),
+        device_index: 0,
+        gain: s.gain,
+        muted: s.muted,
+        level: 0.0,
+    };
+    ui.set_mic_sources(ModelRc::new(VecModel::from(vec![
+        source("Microphone", "Your real mic.", &mic_cfg.sources[micmix::MIC]),
+        source("Desktop audio", "What an output plays (stereo mix), e.g. music or game sound.", &mic_cfg.sources[micmix::DESKTOP]),
+        source(
+            "Voice changer",
+            "An AI voice changer's output (w-okada/RVC, Voicemod, …): pick its mic, or the output it plays to.",
+            &mic_cfg.sources[micmix::CHANGER],
+        ),
+    ])));
+    ui.set_mic_input_choices(ModelRc::new(VecModel::<SharedString>::default()));
+    ui.set_mic_playback_choices(ModelRc::new(VecModel::<SharedString>::default()));
+    ui.set_mic_changer_choices(ModelRc::new(VecModel::<SharedString>::default()));
+    mic_show_fx(&ui, &mic_cfg.fx);
+    MIC.with(|m| {
+        *m.borrow_mut() = Some(MicState { cfg: mic_cfg, tx: mic_tx, shared: mic_shared, inputs: Vec::new(), outputs: Vec::new() })
+    });
+    let mic_timer = slint::Timer::default();
+    let w = ui.as_weak();
+    mic_timer.start(slint::TimerMode::Repeated, Duration::from_millis(60), move || {
+        if let Some(ui) = w.upgrade() {
+            mic_meters(&ui);
+        }
+    });
+    // Open on a given page (0 Mixer, 1 Apps, 2 Mic, 3 Headset, 4 Devices, 5 Settings).
     if let Some(page) = std::env::var("SONAR_DECK_PAGE").ok().and_then(|p| p.parse().ok()) {
         ui.set_page(page);
     }

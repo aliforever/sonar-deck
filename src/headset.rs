@@ -25,6 +25,8 @@ pub struct Status {
     pub raw: Vec<u8>,
     /// Whether the headset itself (not just the dongle) is powered on and linked.
     pub connected: Option<bool>,
+    /// The headset's own mic mute (button or boom flipped up).
+    pub mic_muted: Option<bool>,
     /// Battery in the headset, percent.
     pub battery: Option<u8>,
     /// Spare hot-swap battery charging in the base station, percent.
@@ -383,6 +385,7 @@ fn decode(raw: &[u8]) -> Status {
     let percent = |b: u8| (b <= 100).then_some(b);
     Status {
         connected: Some(connected),
+        mic_muted: connected.then_some(raw[9] != 0),
         battery: if connected { percent(raw[6]) } else { None },
         spare_battery: percent(raw[7]),
         charging: connected.then(|| match raw[15] {

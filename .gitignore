@@ -3,3 +3,6 @@
 /dist
 /stage
 /winget
+
+# DeepFilterNet3 low-latency model (36 MB), downloaded by the release workflow
+/assets/models/

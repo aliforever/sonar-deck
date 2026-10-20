@@ -68,6 +68,15 @@ Choose **More info → Run anyway**, or build it yourself (below).
 If SteelSeries GG is installed, quit it (and turn off its "start with Windows") so the two apps don't fight
 over the headset and default devices.
 
+**Virtual microphone** (needs the free [VB-CABLE](https://vb-audio.com/Cable/) driver)
+
+- **Mic mixer** — mixes your mic, desktop audio and a voice changer into the cable; apps pick "CABLE Output"
+  as their microphone.
+- **Mic processing** — DeepFilterNet3 AI noise suppression, voice presets (Natural, Clear, Broadcast), leveler,
+  de-esser, rumble and pop filter, noise gate and a limiter. About 30 ms of delay in total, or 10 ms with the
+  low-latency model.
+- **Listen** — hear the final mic live, or record 5 seconds and play them back; **Bypass** for A/B.
+
 ## Command line
 
 ```
@@ -78,6 +87,8 @@ sonar-deck auto                   # pick based on whether the headset is on
 sonar-deck volume [0-100]         # show or set the default output volume
 sonar-deck headset [key value]    # show headset settings, or change one (e.g. anc-mode 2)
 sonar-deck eq [preset name]       # show or load an onboard EQ preset (e.g. sonar-deck eq Dota 2)
+sonar-deck default <device name>  # make an output or input the Windows default
+sonar-deck micfx in.wav out.wav   # run the mic processing over a 48 kHz recording (--preset=broadcast, --ll)
 sonar-deck login [on|off]         # launch at login (starts hidden in the tray)
 sonar-deck --tray                 # start hidden in the tray
 sonar-deck uninstall              # remove the login entry and settings

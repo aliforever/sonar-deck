@@ -22,6 +22,12 @@ jobs:
           if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match Cargo.toml version $version" }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Low-latency noise model
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force assets/models | Out-Null
+          Invoke-WebRequest "https://github.com/Rikorose/DeepFilterNet/raw/v0.5.6/models/DeepFilterNet3_ll_onnx.tar.gz" -OutFile assets/models/DeepFilterNet3_ll_onnx.tar.gz
+
       - run: cargo test --release
       - run: cargo build --release
 
@@ -29,7 +35,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist, stage | Out-Null
-          Copy-Item target/release/sonar-deck.exe, LICENSE, README.md stage/
+          Copy-Item target/release/sonar-deck.exe, LICENSE, README.md, THIRD-PARTY-NOTICES.md stage/
+          New-Item -ItemType Directory -Force stage/models | Out-Null
+          Copy-Item assets/models/DeepFilterNet3_ll_onnx.tar.gz stage/models/
           Compress-Archive -Path stage/* -DestinationPath "dist/sonar-deck-$env:VERSION-windows-x64.zip"
 
       - name: Installer

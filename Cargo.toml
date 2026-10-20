@@ -1,6 +1,6 @@
 [package]
 name = "sonar-deck"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Native Windows audio control deck: output switching, app mixer and SteelSeries headset control without SteelSeries GG"
 license = "MIT"
@@ -16,6 +16,10 @@ dirs = "7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slint = "1.18"
+cpal = "0.18"
+# DeepFilterNet3 noise suppression; crates.io only has the 2022 release without the inference engine.
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
 ureq = { version = "3", features = ["json"] }
 hidapi = "2.6"
 
